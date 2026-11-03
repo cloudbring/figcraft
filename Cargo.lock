@@ -1898,6 +1898,7 @@ dependencies = [
  "figcraft-vectordrawable",
  "image",
  "log",
+ "proptest",
  "regex",
  "same-file",
  "serde",
