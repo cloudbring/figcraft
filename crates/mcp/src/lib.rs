@@ -17,6 +17,7 @@ mod backend;
 mod headless;
 mod prompts;
 mod resources;
+pub mod security;
 mod server;
 mod tools;
 

@@ -9,6 +9,17 @@ use serde_json::json;
 
 use super::{Attached, Backend};
 
+fn attached(port: u16) -> std::io::Result<Attached> {
+    Attached::connect_with_token(&format!("127.0.0.1:{port}"), "a".repeat(64))
+}
+
+fn authenticate(stream: &mut std::net::TcpStream) {
+    let mut line = String::new();
+    BufReader::new(stream.try_clone().unwrap()).read_line(&mut line).unwrap();
+    assert_eq!(serde_json::from_str::<serde_json::Value>(&line).unwrap()["method"], "auth");
+    writeln!(stream, "{}", json!({"id":0,"ok":true,"result":{"authenticated":true}})).unwrap();
+}
+
 /// A fake app that takes one connection per reply, reads one request on it and answers with the
 /// reply. It keeps the connections open until [`finish`] (so an unterminated reply never reaches
 /// EOF), then returns how many requests it read.
@@ -19,7 +30,8 @@ fn fake_app(replies: Vec<Vec<u8>>) -> (u16, mpsc::Sender<()>, std::thread::JoinH
     let app = std::thread::spawn(move || {
         let mut open = Vec::new();
         for reply in &replies {
-            let (stream, _) = listener.accept().unwrap();
+            let (mut stream, _) = listener.accept().unwrap();
+            authenticate(&mut stream);
             let mut out = stream.try_clone().unwrap();
             let mut line = String::new();
             BufReader::new(stream).read_line(&mut line).unwrap();
@@ -52,7 +64,8 @@ fn a_raised_timeout_is_asked_for_on_each_request() {
     let app = std::thread::spawn(move || {
         let mut lines = Vec::new();
         while lines.len() < 2 {
-            let (stream, _) = listener.accept().unwrap();
+            let (mut stream, _) = listener.accept().unwrap();
+            authenticate(&mut stream);
             let mut out = stream.try_clone().unwrap();
             let mut line = String::new();
             if BufReader::new(stream).read_line(&mut line).unwrap() > 0 {
@@ -62,8 +75,8 @@ fn a_raised_timeout_is_asked_for_on_each_request() {
         }
         lines
     });
-    Attached::port(port).unwrap().call("engine.commands", json!({})).unwrap();
-    let mut long = Attached::port(port).unwrap().with_timeout(Duration::from_secs(300)).unwrap();
+    attached(port).unwrap().call("engine.commands", json!({})).unwrap();
+    let mut long = attached(port).unwrap().with_timeout(Duration::from_secs(300)).unwrap();
     long.call("engine.commands", json!({})).unwrap();
     let lines = app.join().unwrap();
     assert_eq!(lines[0].get("timeoutMs"), None, "{:?}", lines[0]);
@@ -73,7 +86,7 @@ fn a_raised_timeout_is_asked_for_on_each_request() {
 #[test]
 fn an_oversized_reply_is_refused_and_the_next_call_reconnects() {
     let (port, done, fake) = fake_app(vec![vec![b'x'; 200], ok_reply("fine")]);
-    let mut app = Attached::port(port).unwrap();
+    let mut app = attached(port).unwrap();
     app.max_reply = 64;
     let err = app.call("engine.commands", json!({})).unwrap_err();
     assert!(err.contains("reply larger than"), "{err}");
@@ -87,7 +100,7 @@ fn an_oversized_reply_is_refused_and_the_next_call_reconnects() {
 fn a_reply_at_the_limit_is_read() {
     let reply = ok_reply("at the limit");
     let (port, done, fake) = fake_app(vec![reply.clone()]);
-    let mut app = Attached::port(port).unwrap();
+    let mut app = attached(port).unwrap();
     app.max_reply = reply.len() - 1; // the newline doesn't count
     assert_eq!(app.call("engine.commands", json!({})).unwrap(), json!("at the limit"));
     finish(done, fake, 1);
@@ -96,7 +109,7 @@ fn a_reply_at_the_limit_is_read() {
 #[test]
 fn a_reply_that_is_not_utf8_is_an_error() {
     let (port, done, fake) = fake_app(vec![b"{\"ok\": true, \"result\": \"\xff\"}\n".to_vec()]);
-    let mut app = Attached::port(port).unwrap();
+    let mut app = attached(port).unwrap();
     let err = app.call("engine.commands", json!({})).unwrap_err();
     assert!(err.contains("failed"), "{err}");
     assert!(app.conn.is_none());

@@ -112,11 +112,27 @@ pub fn start(port: u16, busy: Duration, queue: Queue, ctx: CtxSlot, events: Arc<
             return;
         }
     };
+    let token = match figcraft_mcp::security::generate_token() {
+        Ok(token) => token,
+        Err(error) => {
+            eprintln!("FigCraft control server cannot generate token: {error}");
+            return;
+        }
+    };
+    if let Some(path) = std::env::var_os("FIGCRAFT_CONTROL_TOKEN_FILE") {
+        if let Err(error) = figcraft_mcp::security::write_token(std::path::Path::new(&path), &token) {
+            eprintln!("FigCraft control server cannot create token file: {error}");
+            return;
+        }
+        eprintln!("FigCraft control token file: {}", std::path::Path::new(&path).display());
+    } else {
+        eprintln!("FigCraft control token: {token}");
+    }
     eprintln!("FigCraft control server listening on 127.0.0.1:{port}");
     let spawned = std::thread::Builder::new().name("figcraft-control".into()).spawn(move || {
         let mut workers = Vec::new();
         for stream in accepted(listener.incoming(), || std::thread::sleep(ACCEPT_RETRY)) {
-            spawn_connection(stream, queue.clone(), ctx.clone(), events.clone(), &mut workers, TIMEOUT);
+            spawn_connection(stream, queue.clone(), ctx.clone(), events.clone(), &mut workers, TIMEOUT, token.clone());
         }
     });
     if let Err(e) = spawned {
@@ -136,17 +152,57 @@ fn spawn_connection(
     events: Arc<EventLog>,
     workers: &mut Vec<std::thread::JoinHandle<()>>,
     timeout: Duration,
+    token: String,
 ) {
     workers.retain(|worker| !worker.is_finished());
     if workers.len() >= MAX_CONNECTIONS {
         return;
     }
     match std::thread::Builder::new().name("figcraft-control-conn".into()).spawn(move || {
+        let mut stream = stream;
+        if !authenticate(&mut stream, &token) {
+            return;
+        }
         let _ = serve_with_events(stream, queue, ctx, events, timeout);
     }) {
         Ok(worker) => workers.push(worker),
         Err(e) => log::error!("control connection thread: {e}"),
     }
+}
+
+fn authenticate(stream: &mut TcpStream, expected: &str) -> bool {
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    let mut line = Vec::new();
+    let mut complete = false;
+    while line.len() < 1024 {
+        let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+        if remaining.is_zero() || stream.set_read_timeout(Some(remaining)).is_err() {
+            return false;
+        }
+        let mut byte = [0];
+        if stream.read_exact(&mut byte).is_err() {
+            return false;
+        }
+        if byte[0] == b'\n' {
+            complete = true;
+            break;
+        }
+        line.push(byte[0]);
+    }
+    let request: Value = serde_json::from_slice(&line).unwrap_or(Value::Null);
+    let id = request.get("id").cloned().unwrap_or(Value::Null);
+    let supplied = request.get("params").and_then(|params| params.get("token")).and_then(Value::as_str).unwrap_or("");
+    let valid =
+        complete && request.get("method").and_then(Value::as_str) == Some("auth") && figcraft_mcp::security::token_matches(expected, supplied);
+    if !valid {
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    let response = if valid {
+        json!({"id":id,"ok":true,"result":{"authenticated":true}})
+    } else {
+        json!({"id":id,"ok":false,"error":"authentication required"})
+    };
+    writeln!(stream, "{response}").is_ok() && valid
 }
 
 /// Serve one control connection: read bounded JSON lines, reject oversized frames and a

@@ -7,12 +7,24 @@ use std::net::TcpListener;
 use figcraft_mcp::{Attached, Backend, Headless, Server};
 use serde_json::{Value, json};
 
+fn attached(port: u16) -> std::io::Result<Attached> {
+    Attached::connect_with_token(&format!("127.0.0.1:{port}"), "a".repeat(64))
+}
+
+fn authenticate(stream: &mut std::net::TcpStream) {
+    let mut line = String::new();
+    BufReader::new(stream.try_clone().unwrap()).read_line(&mut line).unwrap();
+    assert_eq!(serde_json::from_str::<Value>(&line).unwrap()["method"], "auth");
+    writeln!(stream, "{}", json!({"id":0,"ok":true,"result":{"authenticated":true}})).unwrap();
+}
+
 fn fake_app() -> u16 {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let port = listener.local_addr().unwrap().port();
     std::thread::spawn(move || {
         let mut h = Headless::new();
-        for stream in listener.incoming().flatten() {
+        for mut stream in listener.incoming().flatten() {
+            authenticate(&mut stream);
             let mut out = stream.try_clone().unwrap();
             for line in BufReader::new(stream).lines() {
                 let Ok(line) = line else { break };
@@ -40,7 +52,7 @@ fn call(s: &mut Server, tool: &str, args: Value) -> Value {
 #[test]
 fn attached_backend_forwards_everything() {
     let port = fake_app();
-    let backend = Attached::port(port).unwrap();
+    let backend = attached(port).unwrap();
     assert!(backend.describe().contains(&port.to_string()));
     let mut s = Server::new(Box::new(backend));
     let r = call(&mut s, "create_node", json!({"type": "frame", "width": 64, "height": 32, "props": {"fill": "#FF0000"}}));
@@ -66,7 +78,7 @@ fn attached_backend_forwards_everything() {
 
 #[test]
 fn attached_inspection_forwards_compact_options_to_the_app() {
-    let mut s = Server::new(Box::new(Attached::port(fake_app()).unwrap()));
+    let mut s = Server::new(Box::new(attached(fake_app()).unwrap()));
     let created = call(&mut s, "create_node", json!({"type": "text", "text": "界".repeat(121), "name": "Title"}));
     let id = serde_json::from_str::<Value>(created["content"][0]["text"].as_str().unwrap()).unwrap()["id"].clone();
     let r = call(&mut s, "get_node", json!({"id": id, "outline": true}));
@@ -84,7 +96,7 @@ fn attached_inspection_forwards_compact_options_to_the_app() {
 
 #[test]
 fn an_attached_agent_comments_under_its_own_name() {
-    let mut s = Server::new(Box::new(Attached::port(fake_app()).unwrap()));
+    let mut s = Server::new(Box::new(attached(fake_app()).unwrap()));
     let init = json!({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "Claude", "version": "1"}}});
     assert!(s.handle_line(&init.to_string()).is_some());
     let run = |s: &mut Server, command: &str, params: Value| {
@@ -100,7 +112,7 @@ fn an_attached_agent_comments_under_its_own_name() {
 #[test]
 fn attached_to_nothing_fails_cleanly() {
     let port = TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
-    assert!(Attached::port(port).is_err());
+    assert!(attached(port).is_err());
 }
 
 #[test]
@@ -112,6 +124,7 @@ fn lost_mutation_reply_is_not_replayed_and_next_call_reconnects() {
         let mut methods = Vec::new();
         for lose_reply in [true, false] {
             let (mut stream, _) = listener.accept().unwrap();
+            authenticate(&mut stream);
             stream.set_read_timeout(Some(std::time::Duration::from_secs(5))).unwrap();
             let mut line = String::new();
             BufReader::new(stream.try_clone().unwrap()).read_line(&mut line).unwrap();
@@ -125,7 +138,7 @@ fn lost_mutation_reply_is_not_replayed_and_next_call_reconnects() {
         }
         methods
     });
-    let mut backend = Attached::port(port).unwrap();
+    let mut backend = attached(port).unwrap();
     let result = backend.call("engine.execute", json!({"command": "shape.rectangle", "params": {"width": 64, "height": 32}}));
     assert!(result.is_err(), "a lost reply must not turn into a successful replay: {result:?}");
     let error = result.unwrap_err();
@@ -147,6 +160,7 @@ fn a_connection_the_app_closed_while_idle_is_replaced_before_sending() {
         // Each connection answers one request, then the app drops it as it does an idle one.
         for _ in 0..2 {
             let (mut stream, _) = listener.accept().unwrap();
+            authenticate(&mut stream);
             stream.set_read_timeout(Some(std::time::Duration::from_secs(5))).unwrap();
             let mut line = String::new();
             BufReader::new(stream.try_clone().unwrap()).read_line(&mut line).unwrap();
@@ -160,7 +174,7 @@ fn a_connection_the_app_closed_while_idle_is_replaced_before_sending() {
         }
         methods
     });
-    let mut backend = Attached::port(port).unwrap();
+    let mut backend = attached(port).unwrap();
     backend.call("engine.execute", json!({"command": "shape.rectangle", "params": {"width": 64, "height": 32}})).unwrap();
     closed_rx.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
     std::thread::sleep(std::time::Duration::from_millis(100));
@@ -173,8 +187,13 @@ fn a_connection_the_app_closed_while_idle_is_replaced_before_sending() {
 #[test]
 fn reconnect_failure_reports_request_not_sent() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-    let mut backend = Attached::port(listener.local_addr().unwrap().port()).unwrap();
-    drop(listener);
+    let port = listener.local_addr().unwrap().port();
+    let worker = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        authenticate(&mut stream);
+    });
+    let mut backend = attached(port).unwrap();
+    worker.join().unwrap();
     assert!(backend.call("document.inspect", json!({})).is_err());
     let error = backend.call("document.inspect", json!({})).unwrap_err();
     assert!(error.contains("request was not sent"), "{error}");
@@ -182,7 +201,7 @@ fn reconnect_failure_reports_request_not_sent() {
 
 #[test]
 fn a_tool_call_naming_its_document_edits_that_file_and_not_the_one_in_front() {
-    let mut s = Server::new(Box::new(Attached::port(fake_app()).unwrap()));
+    let mut s = Server::new(Box::new(attached(fake_app()).unwrap()));
     let text = |r: &Value| -> Value { serde_json::from_str(r["content"][0]["text"].as_str().unwrap()).unwrap() };
     let back = text(&call(&mut s, "inspect_document", json!({"depth": 0})))["id"].clone();
     assert!(back.is_u64(), "inspect_document names the file: {back}");

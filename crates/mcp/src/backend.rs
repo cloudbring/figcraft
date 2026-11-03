@@ -89,12 +89,20 @@ pub struct Attached {
     max_reply: usize,
     /// How long the app is asked to wait for each request; `None`: its own 60 s.
     timeout: Option<Duration>,
+    token: Option<String>,
 }
 
 impl Attached {
     /// Connect to `addr` (e.g. `127.0.0.1:7979`), failing fast when nothing is listening.
     pub fn connect(addr: &str) -> std::io::Result<Self> {
-        let mut r = Self { addr: addr.to_string(), conn: None, next_id: 1, max_reply: MAX_REPLY, timeout: None };
+        let mut r = Self { addr: addr.to_string(), conn: None, next_id: 1, max_reply: MAX_REPLY, timeout: None, token: None };
+        r.reconnect()?;
+        Ok(r)
+    }
+
+    /// Connect using an explicitly supplied control token.
+    pub fn connect_with_token(addr: &str, token: String) -> std::io::Result<Self> {
+        let mut r = Self { addr: addr.to_string(), conn: None, next_id: 1, max_reply: MAX_REPLY, timeout: None, token: Some(token) };
         r.reconnect()?;
         Ok(r)
     }
@@ -121,12 +129,28 @@ impl Attached {
         let mut last = std::io::Error::new(std::io::ErrorKind::NotFound, format!("cannot resolve {}", self.addr));
         for sa in self.addr.to_socket_addrs()? {
             match TcpStream::connect_timeout(&sa, Duration::from_millis(800)) {
-                Ok(s) => {
+                Ok(mut s) => {
                     s.set_nodelay(true).ok();
                     // The app answers within its timeout; leave headroom.
                     s.set_read_timeout(Some(self.timeout.unwrap_or(Duration::from_secs(60)).saturating_add(Duration::from_secs(30)))).ok();
+                    let token = match &self.token {
+                        Some(token) => token.clone(),
+                        None => crate::security::client_token()?,
+                    };
+                    writeln!(s, "{}", json!({"id": 0, "method": "auth", "params": {"token": token}}))?;
                     let read = s.try_clone()?;
-                    self.conn = Some((BufReader::new(read), s));
+                    let mut reader = BufReader::new(read);
+                    let mut line = Vec::new();
+                    if (&mut reader).take(1025).read_until(b'\n', &mut line)? == 0 || line.len() > 1024 {
+                        return Err(std::io::Error::other("invalid authentication reply"));
+                    }
+                    let reply: Value = serde_json::from_slice(&line).map_err(std::io::Error::other)?;
+                    if reply.get("ok").and_then(Value::as_bool) != Some(true)
+                        || reply.get("result").and_then(|value| value.get("authenticated")).and_then(Value::as_bool) != Some(true)
+                    {
+                        return Err(std::io::Error::other("authentication rejected"));
+                    }
+                    self.conn = Some((reader, s));
                     return Ok(());
                 }
                 Err(e) => last = e,

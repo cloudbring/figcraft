@@ -10,6 +10,13 @@ cargo run -p figcraft -- --control 7979 [file.figcraft|file.svg|image]
 The app listens on `127.0.0.1:<port>` only. Each connection carries **newline-delimited JSON**:
 one request object per line, one reply line per request, in order.
 
+Each launch generates a fresh 256-bit token, printed to stderr or written to a newly created
+private file (0600 on Unix) specified by `FIGCRAFT_CONTROL_TOKEN_FILE`. Remove that file before
+restarting. Each connection must first send `{"id":0,"method":"auth","params":{"token":"TOKEN"}}`
+and receive a successful authentication reply before sending commands. Attached MCP clients use
+`FIGCRAFT_CONTROL_TOKEN` or `FIGCRAFT_CONTROL_TOKEN_FILE` (set only one). Protect the token like a
+password: anyone holding it can control the app. Failed authentication is delayed and disconnected.
+
 ```text
 request:  {"id": 1, "method": "engine.execute", "params": {...}}
 reply:    {"id": 1, "ok": true, "result": ...}
@@ -440,8 +447,13 @@ Close the app (every window, without asking about unsaved changes).
 
 ```sh
 port=7979
+export FIGCRAFT_CONTROL_TOKEN_FILE="${TMPDIR:-/tmp}/figcraft-control-token-$$"
 figcraft --control $port &
+# Wait until the token file has been created before connecting.
+while [ ! -s "$FIGCRAFT_CONTROL_TOKEN_FILE" ]; do sleep 0.1; done
 exec 3<>/dev/tcp/127.0.0.1/$port
+printf '{"id":0,"method":"auth","params":{"token":"%s"}}\n' "$(cat "$FIGCRAFT_CONTROL_TOKEN_FILE")" >&3
+read -r reply <&3; echo "$reply"
 echo '{"id":1,"method":"engine.execute","params":{"command":"frame.create","params":{"preset":"iPhone 16","x":0,"y":0}}}' >&3
 read -r reply <&3; echo "$reply"
 echo '{"id":2,"method":"ui.screenshot","params":{"path":"/tmp/figcraft.png"}}' >&3

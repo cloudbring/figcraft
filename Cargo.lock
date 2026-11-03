@@ -1776,6 +1776,7 @@ dependencies = [
  "figcraft-collab-net",
  "figcraft-engine",
  "figcraft-format",
+ "figcraft-mcp",
  "figcraft-text",
  "figcraft-ui-egui",
  "fmv-macos-events",
@@ -1951,10 +1952,12 @@ dependencies = [
  "figcraft-engine",
  "figcraft-geom",
  "figcraft-render",
+ "getrandom 0.3.4",
  "image",
  "log",
  "proptest",
  "serde_json",
+ "subtle",
 ]
 
 [[package]]

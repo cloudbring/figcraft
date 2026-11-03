@@ -205,7 +205,7 @@ pub struct CommandsArgs {
 /// and the same roots.
 #[derive(Args)]
 pub struct McpArgs {
-    /// Attach to the app started with `figcraft --control PORT`; a bare port means 127.0.0.1:PORT.
+    /// Attach to the app started with `figcraft --control PORT`; set FIGCRAFT_CONTROL_TOKEN or FIGCRAFT_CONTROL_TOKEN_FILE.
     /// Refuses the automation roots
     #[arg(long, value_name = "PORT", value_parser = attach, conflicts_with_all = ["automation_read_root", "automation_write_root"])]
     pub attach: Option<String>,

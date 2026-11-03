@@ -1,6 +1,49 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use super::*;
+
+fn auth_case(first: Value, send_command: bool) -> (Value, bool) {
+    let (mut client, server) = pair();
+    let pending = queue();
+    let copy = pending.clone();
+    let mut workers = Vec::new();
+    spawn_connection(server, pending, context(), Arc::new(EventLog::default()), &mut workers, Duration::from_millis(100), "a".repeat(64));
+    writeln!(client, "{first}").unwrap();
+    let mut reader = BufReader::new(client.try_clone().unwrap());
+    let response = reply(&mut reader);
+    if send_command {
+        writeln!(client, "{}", json!({"id":1,"method":"engine.execute","params":{"command":"file.save"}})).unwrap();
+        let _ = reply(&mut reader);
+    }
+    drop(client);
+    drop(reader);
+    for worker in workers {
+        worker.join().unwrap();
+    }
+    let dispatched = !copy.lock().unwrap().is_empty();
+    (response, dispatched)
+}
+
+#[test]
+fn unauthenticated_command_never_dispatches() {
+    let (response, dispatched) = auth_case(json!({"method":"engine.execute","params":{"command":"file.save"}}), false);
+    assert_eq!(response["ok"], false);
+    assert!(!dispatched);
+}
+
+#[test]
+fn wrong_token_is_rejected() {
+    let (response, dispatched) = auth_case(json!({"method":"auth","params":{"token":"b".repeat(64)}}), false);
+    assert_eq!(response["ok"], false);
+    assert!(!dispatched);
+}
+
+#[test]
+fn correct_token_permits_dispatch() {
+    let (response, dispatched) = auth_case(json!({"method":"auth","params":{"token":"a".repeat(64)}}), true);
+    assert_eq!(response["result"]["authenticated"], true);
+    assert!(dispatched);
+}
 use std::io::Read;
 use std::net::Shutdown;
 use std::sync::mpsc;
@@ -292,6 +335,7 @@ fn connection_limit_rejects_excess_clients_and_reuses_finished_slots() {
             Arc::new(figcraft_engine::events::EventLog::default()),
             &mut workers,
             Duration::from_secs(5),
+            "a".repeat(64),
         );
         clients.push(client);
     }
@@ -304,6 +348,7 @@ fn connection_limit_rejects_excess_clients_and_reuses_finished_slots() {
         Arc::new(figcraft_engine::events::EventLog::default()),
         &mut workers,
         Duration::from_secs(5),
+        "a".repeat(64),
     );
     assert_eq!(extra.read(&mut [0]).unwrap(), 0);
     assert_eq!(workers.len(), MAX_CONNECTIONS);
@@ -316,7 +361,15 @@ fn connection_limit_rejects_excess_clients_and_reuses_finished_slots() {
         std::thread::sleep(Duration::from_millis(1));
     }
     let (mut client, server) = pair();
-    spawn_connection(server, pending, ctx, Arc::new(figcraft_engine::events::EventLog::default()), &mut workers, Duration::from_secs(5));
+    spawn_connection(
+        server,
+        pending,
+        ctx,
+        Arc::new(figcraft_engine::events::EventLog::default()),
+        &mut workers,
+        Duration::from_secs(5),
+        "a".repeat(64),
+    );
     assert_eq!(workers.len(), 1);
     client.write_all(b"invalid\n").unwrap();
     assert_eq!(reply(&mut BufReader::new(client.try_clone().unwrap()))["ok"], false);

@@ -127,6 +127,11 @@ built-in fonts. Attached, the app's own fonts apply. The browser build has no sy
 
 ## Configure a client
 
+For attached mode, launch the app with `FIGCRAFT_CONTROL_TOKEN_FILE` pointing to a new private
+file, and give the MCP client the same environment variable, or set `FIGCRAFT_CONTROL_TOKEN`
+to the token printed by the app. Set only one; remove the token file before restarting the app.
+See [the control protocol](control-protocol.md) for the authentication handshake.
+
 Build the CLI first (`cargo build --release -p figcraft-cli`) and use the absolute path to
 `target/release/figcraft-cli`.
 
@@ -138,7 +143,7 @@ The Linux AppImage bundles the CLI: `FigCraft.AppImage cli <args>` runs `figcraf
 ```sh
 # headless
 claude mcp add figcraft -- /path/to/figcraft-cli mcp
-# drive the running app (start it with: figcraft --control 7979)
+# drive the running app (start it with the same FIGCRAFT_CONTROL_TOKEN_FILE and --control 7979)
 claude mcp add figcraft-app -- /path/to/figcraft-cli mcp --attach 7979
 ```
 
@@ -160,7 +165,7 @@ Or in a project's `.mcp.json`:
 {
   "mcpServers": {
     "figcraft": { "command": "/path/to/figcraft-cli", "args": ["mcp"] },
-    "figcraft-app": { "command": "/path/to/figcraft-cli", "args": ["mcp", "--attach", "7979"] }
+    "figcraft-app": { "command": "/path/to/figcraft-cli", "args": ["mcp", "--attach", "7979"], "env": { "FIGCRAFT_CONTROL_TOKEN_FILE": "/private/path/figcraft-token" } }
   }
 }
 ```
