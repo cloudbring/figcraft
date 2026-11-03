@@ -28,6 +28,7 @@ mod points;
 mod rounded_side_strokes_tests;
 #[cfg(test)]
 mod sides_tests;
+mod tidy;
 pub mod width;
 #[cfg(test)]
 mod width_tests;
@@ -83,8 +84,7 @@ pub fn closed(path: &BezPath) -> BezPath {
 /// Every coordinate is finite and of a sane magnitude (the sweep needs bounded input).
 pub use figcraft_geom::measure::finite_path as finite;
 
-/// Run the sweep library on `f`. Version 0.4 can panic on rare near-degenerate input (an internal
-/// `unwrap` while ordering curves, hit by some font outlines): that is bad input, not a crash.
+/// Run the sweep library on `f`, treating an internal panic as bad input, not a crash.
 // shortcut: wasm32 can't catch it (panics abort there): the page stops and its panic hook keeps the
 // unsaved files (apps/figcraft-web/src/recovery.rs); drop this once linesweeper no longer panics.
 fn sweep<T>(f: impl FnOnce() -> Result<T, PathOpsError>) -> Result<T, PathOpsError> {
@@ -106,9 +106,10 @@ fn binary_by(a: &BezPath, b: &BezPath, rule: linesweeper::FillRule, op: lineswee
     let (a, b) = (closed(a), closed(b));
     budget::check([&a, &b])?;
     let contours = sweep(|| linesweeper::binary_op(&a, &b, rule, op).map_err(|_| PathOpsError::BadInput))?;
+    let anchors = tidy::anchors([&a, &b]);
     let mut out = BezPath::new();
     for c in contours.contours() {
-        out.extend(c.path.elements().iter().copied());
+        out.extend(tidy::refit(&c.path, &anchors).elements().iter().copied());
     }
     Ok(out)
 }

@@ -7,6 +7,47 @@ use figcraft_geom::{Point, Rect};
 
 use crate::{boolean, boolean_ops, boolean_step, simplify_with_rule};
 
+#[test]
+fn near_tangent_circles_remain_separate_or_overlap() {
+    use figcraft_geom::kurbo::Circle;
+    let circle = |x| Circle::new((x, 0.0), 1.0).to_path(0.00001);
+    let a = circle(0.0);
+    let separated = boolean_step(&a, &circle(2.0 + 1e-6), BoolOp::Intersect).unwrap();
+    assert!(separated.area().abs() < 1e-12, "{}", separated.area());
+    let overlap = boolean_step(&a, &circle(2.0 - 1e-4), BoolOp::Intersect).unwrap();
+    assert!(overlap.area().abs() > 1e-8, "{}", overlap.area());
+}
+
+#[test]
+fn collinear_overlap_has_expected_area() {
+    let result = boolean_step(&sq(0.0, 0.0, 10.0), &sq(5.0, 0.0, 10.0), BoolOp::Union).unwrap();
+    assert!((area(&result) - 150.0).abs() < 1e-8, "{}", area(&result));
+}
+
+#[test]
+fn figure_eight_fills_both_lobes() {
+    let mut path = BezPath::new();
+    path.move_to((0.0, 0.0));
+    path.line_to((2.0, 2.0));
+    path.line_to((0.0, 2.0));
+    path.line_to((2.0, 0.0));
+    path.close_path();
+    let result = crate::simplify(&path).unwrap();
+    assert!((area(&result) - 2.0).abs() < 1e-8, "{}", area(&result));
+    assert_ne!(result.winding(Point::new(1.0, 0.25)), 0);
+    assert_ne!(result.winding(Point::new(1.0, 1.75)), 0);
+}
+
+#[test]
+fn tiny_sliver_and_gap_are_preserved() {
+    let a = sq(0.0, 0.0, 1.0);
+    let overlap = boolean_step(&a, &sq(1.0 - 1e-6, 0.0, 1.0), BoolOp::Intersect).unwrap();
+    assert!((area(&overlap) - 1e-6).abs() < 1e-10, "{}", area(&overlap));
+    let gap = boolean_step(&a, &sq(1.0 + 1e-6, 0.0, 1.0), BoolOp::Union).unwrap();
+    assert_eq!(gap.winding(Point::new(1.0 + 0.5e-6, 0.5)), 0);
+    assert!((area(&gap) - 2.0).abs() < 1e-8, "{}", area(&gap));
+}
+
 fn sq(x: f64, y: f64, s: f64) -> BezPath {
     Rect::new(x, y, x + s, y + s).to_path(0.1)
 }

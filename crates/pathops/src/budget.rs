@@ -76,7 +76,7 @@ fn overlapping_pairs(boxes: &[Rect], limit: u64) -> u64 {
     let below = |y: f64| ys.partition_point(|v| *v < y);
     let up_to = |y: f64| ys.partition_point(|v| *v <= y);
     // Entering at x0 before leaving at x1, so boxes that only touch across count.
-    let mut events: Vec<(f64, bool, &Rect)> = boxes.iter().flat_map(|b| [(b.x0, false, b), (b.x1, true, b)]).collect();
+    let mut events: Vec<(f64, bool, &Rect)> = boxes.iter().flat_map(|b| [(b.x0 + 0.0, false, b), (b.x1 + 0.0, true, b)]).collect();
     events.sort_unstable_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
     let (mut tops, mut bottoms) = (Fenwick::new(ys.len()), Fenwick::new(ys.len()));
     let (mut inside, mut pairs) = (0u64, 0u64);
@@ -126,5 +126,16 @@ impl Fenwick {
             i -= i.isolate_lowest_one();
         }
         u64::try_from(n).unwrap_or(0)
+    }
+}
+
+#[cfg(test)]
+mod zero_tests {
+    use super::*;
+
+    #[test]
+    fn signed_zero_touching_boxes_overlap() {
+        let boxes = [Rect::new(-1.0, 0.0, -0.0, 1.0), Rect::new(0.0, 0.0, 1.0, 1.0)];
+        assert_eq!(overlapping_pairs(&boxes, 10), 1);
     }
 }
