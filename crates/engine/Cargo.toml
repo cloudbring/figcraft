@@ -22,6 +22,7 @@ figcraft-svg = { workspace = true }
 figcraft-pdf = { workspace = true }
 figcraft-vectordrawable = { workspace = true }
 craft-docpath = { workspace = true }
+craft-keymap = { workspace = true }
 figcraft-plugin = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

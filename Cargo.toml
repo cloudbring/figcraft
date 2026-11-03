@@ -37,6 +37,8 @@ figcraft-plugin = { path = "crates/plugin" }
 # dependencies and is pinned separately for the suite updater rollout.
 # Which paths stored in a document may be followed (craft-libs).
 craft-docpath = { version = "0.1.0", git = "https://github.com/storytold/craft-libs", rev = "e11f9d9aebea5f6b8e74643c1ea1ed172ba5f545" }
+# TODO: repoint to storytold/craft-libs after upstream merge
+craft-keymap = { git = "https://github.com/cloudbring/craft-libs", branch = "algo/integration" }
 # Who draws the window frame on Linux — the compositor or the app — so every Craft app shows the
 # same native titlebar per desktop (craft-libs). FigCraft only reads the probe result and maps it
 # to its own `TitleBar`, so it does not enable craft-window's optional `egui` helpers (which would

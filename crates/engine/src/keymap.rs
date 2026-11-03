@@ -379,17 +379,14 @@ pub static GESTURES: &[(Group, &str, &str, &str)] = &[
 ];
 
 /// Modifier keys held (as pressed: on Windows and Linux Ctrl may come as `cmd`, `ctrl` or both).
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct Mods {
-    pub shift: bool,
-    pub alt: bool,
-    pub cmd: bool,
-    pub ctrl: bool,
-}
+pub use craft_keymap::Mods;
 
-impl Mods {
-    pub fn is_none(self) -> bool {
-        self == Mods::default()
+impl From<Platform> for craft_keymap::Platform {
+    fn from(platform: Platform) -> Self {
+        match platform {
+            Platform::Mac => Self::Mac,
+            Platform::Other => Self::Linux,
+        }
     }
 }
 
@@ -397,10 +394,11 @@ impl Mods {
 /// [`crate::textedit::key`]. macOS: Alt by word, Cmd to the line's ends (Up/Down: the text's).
 /// Windows and Linux: Ctrl by word, Ctrl+Home/End to the text's ends.
 pub fn text_motion(platform: Platform, key: &str, m: Mods) -> (bool, bool) {
+    let effective = m.effective(platform.into());
     match platform {
-        Platform::Mac => (m.alt, m.cmd),
-        Platform::Other if matches!(key, "Home" | "End") => (false, m.cmd || m.ctrl),
-        Platform::Other => (m.cmd || m.ctrl, false),
+        Platform::Mac => (effective.alt, effective.cmd),
+        Platform::Other if matches!(key, "Home" | "End") => (false, effective.cmd),
+        Platform::Other => (effective.cmd, false),
     }
 }
 
@@ -469,22 +467,38 @@ pub fn parse(spec: &str) -> Option<(Mods, &str)> {
             }
         }
     }
-    key.map(|k| (m, k))
+    key.map(|k| {
+        let Some(key) = craft_keymap::Key::parse(k) else { return (m, k) };
+        let mut portable = String::new();
+        for (enabled, name) in [(m.cmd, "Cmd+"), (m.ctrl, "Ctrl+"), (m.alt, "Alt+"), (m.shift, "Shift+")] {
+            if enabled {
+                portable.push_str(name);
+            }
+        }
+        portable.push_str(key.name());
+        let mods = craft_keymap::Chord::parse(&portable).map_or(m, |chord| chord.mods);
+        (mods, k)
+    })
 }
 
 fn same_mods(platform: Platform, want: Mods, got: Mods) -> bool {
-    match platform {
-        Platform::Mac => want == got,
-        // Cmd and Ctrl are one key here.
-        Platform::Other => want.shift == got.shift && want.alt == got.alt && (want.cmd || want.ctrl) == (got.cmd || got.ctrl),
-    }
+    want.effective(platform.into()) == got.effective(platform.into())
 }
 
 /// Whether a binding fires for `key` with these modifiers on `platform`.
 pub fn matches(spec: &str, platform: Platform, key: &str, mods: Mods) -> bool {
     let Some((key, shift)) = normalize(key) else { return false };
     let mods = Mods { shift: mods.shift || shift, ..mods };
-    parse(spec).is_some_and(|(want, k)| k.eq_ignore_ascii_case(key) && same_mods(platform, want, mods))
+    parse(spec).is_some_and(|(want, wanted_key)| {
+        if !wanted_key.eq_ignore_ascii_case(key) {
+            return false;
+        }
+        let shared = |name: &str, mods| craft_keymap::Key::parse(name).map(|key| craft_keymap::Chord { key, mods });
+        match (shared(wanted_key, want), shared(key, mods)) {
+            (Some(wanted), Some(got)) => wanted.effective(platform.into()) == got.effective(platform.into()),
+            _ => wanted_key.eq_ignore_ascii_case(key) && same_mods(platform, want, mods),
+        }
+    })
 }
 
 /// The binding `key` with these modifiers fires in `context` on `platform`.
@@ -560,3 +574,11 @@ pub fn display(spec: &str, platform: Platform) -> String {
     }
     out
 }
+
+#[cfg(test)]
+#[path = "keymap_legacy_test.rs"]
+mod legacy;
+
+#[cfg(test)]
+#[path = "keymap_identity_test.rs"]
+mod identity_tests;

@@ -1069,6 +1069,15 @@ dependencies = [
 [[package]]
 name = "craft-keymap"
 version = "0.1.0"
+source = "git+https://github.com/cloudbring/craft-libs?branch=algo%2Fintegration#77d3e6039224e2ae017701cb7051ab7abb1ee9a2"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "craft-keymap"
+version = "0.1.0"
 source = "git+https://github.com/storytold/craft-libs?rev=e11f9d9aebea5f6b8e74643c1ea1ed172ba5f545#e11f9d9aebea5f6b8e74643c1ea1ed172ba5f545"
 dependencies = [
  "egui",
@@ -1081,7 +1090,7 @@ name = "craft-menu"
 version = "0.1.0"
 source = "git+https://github.com/storytold/craft-libs?rev=e11f9d9aebea5f6b8e74643c1ea1ed172ba5f545#e11f9d9aebea5f6b8e74643c1ea1ed172ba5f545"
 dependencies = [
- "craft-keymap",
+ "craft-keymap 0.1.0 (git+https://github.com/storytold/craft-libs?rev=e11f9d9aebea5f6b8e74643c1ea1ed172ba5f545)",
  "craft-quit",
  "egui",
  "muda",
@@ -1882,6 +1891,7 @@ dependencies = [
  "craft-docpath",
  "craft-font-catalog",
  "craft-font-store",
+ "craft-keymap 0.1.0 (git+https://github.com/cloudbring/craft-libs?branch=algo%2Fintegration)",
  "deunicode",
  "figcraft-collab",
  "figcraft-color",
